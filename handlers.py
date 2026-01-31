@@ -6,9 +6,14 @@ from aiogram.fsm.context import FSMContext
 
 from pdf import generate_pdf
 from state import PDFStates
+from keyboards import menu
 
 
 user = Router()
+    
+@user.message(CommandStart())
+async def cmd_start(message: Message):
+    await message.answer('Добро пожаловать', reply_markup=menu)
     
 
 @user.message(Command('pdf'))

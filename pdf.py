@@ -31,7 +31,7 @@ def first_page(canvas, doc):
 
 def later_pages(canvas, doc):
     canvas.saveState()
-    canvas.setFont('Times-Roman', 9)
+    canvas.setFont('DejaVu', 16)
     canvas.drawString(inch, 0.75 * inch, '')
     canvas.restoreState()
     
@@ -46,16 +46,17 @@ def generate_pdf(recipe_list, filename) -> str:
             name='TitleStyle',
             parent=style,
             fontName='DejaVu',
-            fontSize=20,
+            fontSize=36,
             fontWeight='bold',
-            spaceAfter=15,
+            spaceAfter=33,
             keepWithNext=True)
     
     ingredients_style = ParagraphStyle(
             name='IngredientsStyle',
             parent=style,
             fontName='DejaVu',
-            spaceAfter=12
+            fontSize=20,
+            spaceAfter=15
     )
     
     for name, ingredient in recipe_list:
