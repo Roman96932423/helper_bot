@@ -13,7 +13,7 @@ styles = getSampleStyleSheet()
 
 page_info = "Generated using ReportLab platypus"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONT_PATH = os.path.join(BASE_DIR, 'fonts', 'DejaVuSans.ttf')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
 
@@ -36,7 +36,7 @@ def later_pages(canvas, doc):
     canvas.restoreState()
     
     
-def generate_pdf(recipe_list, filename) -> str:
+def generate_pdf(recipes_list, filename) -> str:
     file_path = os.path.join(OUTPUT_DIR, filename)
     doc = SimpleDocTemplate(file_path)
     story = [Spacer(1, 2 * inch)]
@@ -59,11 +59,14 @@ def generate_pdf(recipe_list, filename) -> str:
             spaceAfter=15
     )
     
-    for name, ingredient in recipe_list:
-        title = Paragraph(name.capitalize(), title_style)
-        ingredients = Paragraph(ingredient, ingredients_style)
+    for recipe_title in recipes_list:
+        title = Paragraph(recipe_title.title, title_style)
         story.append(title)
-        story.append(ingredients)
+        
+        for recipe_ing in recipe_title.ingredients:
+            ingredient = Paragraph(recipe_ing.name, ingredients_style)
+            story.append(ingredient)
+        
         story.append(Spacer(1, 0.2 * inch))
         
     doc.build(story, onFirstPage=first_page, onLaterPages=later_pages)

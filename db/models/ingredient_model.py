@@ -1,13 +1,13 @@
 from sqlalchemy import String, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from database import Base
+from db.database import Base
 
 
 class Ingredient(Base):
     __tablename__ = 'ingredients'
     __table_args__ = (
-		UniqueConstraint('recipe_id', 'position', name='uq_recipe_ingredient_position')
+		UniqueConstraint('recipe_id', 'position', name='uq_recipe_ingredient_position'),
 	)
     
     id: Mapped[int] = mapped_column(primary_key=True)

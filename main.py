@@ -3,7 +3,9 @@ import asyncio
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 
-from handlers import user
+from db.session import async_session
+from handlers import router
+from middlewares.session_middleware import DBSessionMiddleware
 
 
 load_dotenv()
@@ -14,7 +16,8 @@ TOKEN = os.getenv('BOT_TOKEN')
 async def main() -> None:
     bot = Bot(TOKEN)
     dp = Dispatcher()
-    dp.include_router(user)
+    dp.message.middleware(DBSessionMiddleware(async_session))
+    dp.include_router(router)
     await dp.start_polling(bot)
 
 
