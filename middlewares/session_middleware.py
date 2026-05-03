@@ -1,4 +1,4 @@
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from aiogram import BaseMiddleware
 from typing import Callable, Dict, Any, Awaitable
 
@@ -15,5 +15,6 @@ class DBSessionMiddleware(BaseMiddleware):
 	):
         async with self.session_factory() as session:
             data['session'] = session
+            
             return await handler(event, data)
 

@@ -16,7 +16,7 @@ TOKEN = os.getenv('BOT_TOKEN')
 async def main() -> None:
     bot = Bot(TOKEN)
     dp = Dispatcher()
-    dp.message.middleware(DBSessionMiddleware(async_session))
+    dp.update.middleware(DBSessionMiddleware(async_session))
     dp.include_router(router)
     await dp.start_polling(bot)
 
