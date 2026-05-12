@@ -4,13 +4,13 @@ from sqlalchemy.orm import selectinload
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, FSInputFile
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from utils import format
 from db.session import async_session
-from db.crud.users import get_user, create_user
-from db.crud.get_recipes import get_user_recipes
+from db.repositories import RecipeRepository, UserRepository, IngredientRepository
+from db.services import RecipeService, IngredientService
 from services.pdf_generator import generate_pdf
 from state import PDFStates, RecipeStates, EditRecipeName, EditRecipeIngredientName, AddIngredientToRecipe
 from keyboards import (
@@ -25,10 +25,11 @@ router = Router()
 # Обработка команды старт
 @router.message(CommandStart())
 async def cmd_start(message: Message, session: AsyncSession):
-    user = await get_user(session, int(message.from_user.id))
+    user_repo = UserRepository(session)
+    user = await user_repo.get(user_id=message.from_user.id)
         
     if not user:
-        user = await create_user(session, int(message.from_user.id))
+        user = await user_repo.create(tg_id=message.from_user.id)
     
     await message.answer('Ты зарегистрирован', reply_markup=build_reply_kb(
         [
@@ -63,6 +64,10 @@ async def get_recipe_ingredients(message: Message, state: FSMContext) -> None:
 
 @router.message(RecipeStates.waiting_for_recipe_ingredients, F.text == '/готово')
 async def create_recipe(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    user_repo = UserRepository(session)
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo, user_repo)
+    
     data = await state.get_data()
     
     title = data.get('title')
@@ -73,19 +78,9 @@ async def create_recipe(message: Message, state: FSMContext, session: AsyncSessi
         
         return
     
-    user = await get_user(session, message.from_user.id)
-    recipe = Recipe(
-        title=title,
-        user_id=user.id
-    )
-    
-    recipe.ingredients = [
-        Ingredient(name=ing, position=i)
-        for i, ing in enumerate(ingredients, start=1)
-    ]
-    
     try:
-        session.add(recipe)
+        await recipe_service.add_recipe(message.from_user.id, title, ingredients)
+        
         await session.commit()
     except Exception:
         await session.rollback()
@@ -109,8 +104,11 @@ async def create_recipe(message: Message, state: FSMContext, session: AsyncSessi
 # Хендлер показать список рецептов
 @router.message(F.text == 'удалить рецепт')
 async def delete_recipe_start(message: Message, session: AsyncSession):
-    user = await get_user(session, message.from_user.id)
-    recipes = await get_user_recipes(session, user.id)
+    user_repo = UserRepository(session)
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo, user_repo)
+    
+    recipes = await recipe_service.get_recipes_by_user(message.from_user.id)
     
     await message.answer('🗑️ Выбери рецепт для удаления: ', reply_markup=build_inline_kb(recipes, 2, lambda r: r.title, lambda r: f'del_recipe:{r.id}'))
     
@@ -118,10 +116,13 @@ async def delete_recipe_start(message: Message, session: AsyncSession):
 # Обработка нажатия кнопки для удаления
 @router.callback_query(F.data.startswith('del_recipe:'))
 async def delete_recipe(callback, session: AsyncSession):
-    recipe_id = int(callback.data.split(':')[1])
-    recipe = await session.get(Recipe, recipe_id)
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo)
     
-    await session.delete(recipe)
+    recipe_id = int(callback.data.split(':')[1])
+    
+    await recipe_service.delete_recipe(recipe_id)
+    
     await session.commit()
     
     await callback.message.edit_text('✅ Рецепт удалён')
@@ -131,19 +132,22 @@ async def delete_recipe(callback, session: AsyncSession):
 # Показать список рецептов для выбора
 @router.message(F.text == 'удалить ингридиент')
 async def delete_ingredient_start(message: Message, session: AsyncSession):
-    user = await get_user(session, message.from_user.id)
-    recipes = await get_user_recipes(session, user.id)
+    user_repo = UserRepository(session)
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo, user_repo)
+    
+    recipes = await recipe_service.get_recipes_by_user(message.from_user.id)
     
     await message.answer('Выбери рецепт', reply_markup=build_inline_kb(recipes, 2, lambda r: r.title, lambda r: f'choose_recipe:{r.id}'))
     
 
-# Показать список ингридиента для удаления
+# Показать список ингридиентов для удаления
 @router.callback_query(F.data.startswith('choose_recipe:'))
 async def delete_ingredient_second(callback, session: AsyncSession):
-    recipe_id = int(callback.data.split(':')[1])
-    result = await session.execute(select(Recipe).options(selectinload(Recipe.ingredients)).where(Recipe.id == recipe_id))
+    recipe_repo = RecipeRepository(session)
     
-    recipe = result.scalar_one()
+    recipe_id = int(callback.data.split(':')[1])
+    recipe = await recipe_repo.get_recipe_by_id(recipe_id)
     
     await callback.message.edit_text(f'👨‍🍳Выбери ингридиент для удаления рецепта: {recipe.title}', reply_markup=build_inline_kb(recipe.ingredients, 1, lambda ing: ing.name, lambda ing: f'del_ing:{ing.id}'))
     
@@ -151,18 +155,12 @@ async def delete_ingredient_second(callback, session: AsyncSession):
 # Удаление ингридиента
 @router.callback_query(F.data.startswith('del_ing:'))
 async def delete_ingredient(callback, session: AsyncSession):
+    ing_repo = IngredientRepository(session)
+    ing_service = IngredientService(ing_repo)
+    
     ingredient_id = int(callback.data.split(':')[1])
-    ingredient = await session.get(Ingredient, ingredient_id)
-    recipe_id = ingredient.recipe_id
     
-    await session.delete(ingredient)
-    
-    result = await session.execute(select(Ingredient).where(Ingredient.recipe_id == recipe_id).order_by(Ingredient.position))
-    
-    ingredients_position = result.scalars().all()
-    
-    for index, ing in enumerate(ingredients_position, start=1):
-        ing.position = index
+    await ing_service.delete(ingredient_id)
     
     await session.commit()
     
@@ -183,8 +181,11 @@ async def edit_recipe(message: Message, session: AsyncSession):
 # Выбрать рецепт для изменения названия 1.
 @router.callback_query(F.data.startswith('choose_edit_recipe:'))
 async def edit_name_recipe_first(callback, session: AsyncSession):
-    user = await get_user(session, callback.from_user.id)
-    recipes = await get_user_recipes(session, user.id)
+    user_repo = UserRepository(session)
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo, user_repo)
+    
+    recipes = await recipe_service.get_recipes_by_user(callback.from_user.id)
     
     await callback.answer()
     await callback.message.edit_text('📄Выбери рецепт для изменения', reply_markup=build_inline_kb(recipes, 2, lambda r: r.title, lambda r: f'edit_recipe:{r.id}'))
@@ -205,14 +206,17 @@ async def edit_name_recipe_second(callback, state: FSMContext):
 # Изменить название рецепта 3.
 @router.message(EditRecipeName.waiting_for_new_recipe_title)
 async def edit_recipe_name_last(message: Message, session: AsyncSession, state: FSMContext):
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo)
+    
     new_recipe_title = message.text
     data = await state.get_data()
     recipe_id = data['recipe_id']
-    recipe = await session.get(Recipe, recipe_id)
-    recipe.title = new_recipe_title
+    
+    await recipe_service.update_name(recipe_id, new_recipe_title)
     
     await session.commit()
-    await message.answer('Имя успешно изменено!✅')
+    await message.answer('Название успешно изменено!✅')
     await state.clear()
 
 
@@ -220,8 +224,11 @@ async def edit_recipe_name_last(message: Message, session: AsyncSession, state: 
 # Показать список рецептов
 @router.callback_query(F.data.startswith('choose_edit_ing:'))
 async def edit_recipe_ingredient_name_start(callback, session: AsyncSession):
-    user = await get_user(session, callback.from_user.id)
-    recipes = await get_user_recipes(session, user.id)
+    user_repo = UserRepository(session)
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo, user_repo)
+    
+    recipes = await recipe_service.get_recipes_by_user(callback.from_user.id)
     
     await callback.message.edit_text('⬇️Выбери рецепт', reply_markup=build_inline_kb(recipes, 2, lambda r: r.title, lambda r: f'edit_recipe_ing_name:{r.id}'))
     await callback.answer()
@@ -231,11 +238,10 @@ async def edit_recipe_ingredient_name_start(callback, session: AsyncSession):
 # Показать ингридиенты выбранного рецепта
 @router.callback_query(F.data.startswith('edit_recipe_ing_name:'))
 async def edit_recipe_ingredient_name_second(callback, session: AsyncSession):
+    recipe_repo = RecipeRepository(session)
+    
     recipe_id = int(callback.data.split(':')[1])
-    result = await session.execute(select(Recipe).options(selectinload(Recipe.ingredients)).where(Recipe.id == recipe_id))
-    
-    recipe = result.scalar_one()
-    
+    recipe = await recipe_repo.get_recipe_by_id(recipe_id)
     
     await callback.message.edit_text('Выбери ингридиент для изменения', reply_markup=build_inline_kb(recipe.ingredients, 1, lambda ing: ing.name, lambda ing: f'edit_recipe_ing_name_end:{ing.id}'))
     await callback.answer()
@@ -255,11 +261,14 @@ async def edit_recipe_ingredient_name_four(callback, state: FSMContext):
 # Изменить название ингридиента 4.
 @router.message(EditRecipeIngredientName.waiting_for_new_ingredient_name)
 async def edit_recipe_ingredient_name_last(message: Message, session: AsyncSession, state:FSMContext):
+    ing_repo = IngredientRepository(session)
+    ing_service = IngredientService(ing_repo)
+    
     new_ing_name = message.text
     data = await state.get_data()
     ing_id = data['ing_id']
-    ingredient = await session.get(Ingredient, ing_id)
-    ingredient.name = new_ing_name
+    
+    await ing_service.update_name(ing_id, new_ing_name)
     
     await session.commit()
     await message.answer('Ингридиент успешно изменён✅')
@@ -269,8 +278,11 @@ async def edit_recipe_ingredient_name_last(message: Message, session: AsyncSessi
 # Добавить ингридиент в рецепт 1.
 @router.callback_query(F.data.startswith('choose_add_ing:'))
 async def add_ing_to_recipe_start(callback, session: AsyncSession):
-    user = await get_user(session, callback.from_user.id)
-    recipes = await get_user_recipes(session, user.id)
+    user_repo = UserRepository(session)
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo, user_repo)
+    
+    recipes = await recipe_service.get_recipes_by_user(callback.from_user.id)
     
     await callback.message.edit_text('Выбери рецепт⬇️', reply_markup=build_inline_kb(recipes, 2, lambda r: r.title, lambda r: f'choose_recipe_for_add_ing:{r.id}'))
     
@@ -278,11 +290,12 @@ async def add_ing_to_recipe_start(callback, session: AsyncSession):
 # Добавить ингридиент в рецепт 2.
 @router.callback_query(F.data.startswith('choose_recipe_for_add_ing:'))
 async def add_ing_to_recipe_second(callback, session: AsyncSession, state: FSMContext):
+    recipe_repo = RecipeRepository(session)
+    
     recipe_id = int(callback.data.split(':')[1])
-    result = await session.execute(select(Recipe).options(selectinload(Recipe.ingredients)).where(Recipe.id == recipe_id))
     ingredients_str = ''
     
-    recipe = result.scalar_one()
+    recipe = await recipe_repo.get_recipe_by_id(recipe_id)
     
     for ing in recipe.ingredients:
         ingredients_str += f'• {ing.name}'
@@ -296,16 +309,15 @@ async def add_ing_to_recipe_second(callback, session: AsyncSession, state: FSMCo
 # Добавить ингридиент в рецепт 3.
 @router.message(AddIngredientToRecipe.waiting_for_ing_to_recipe)
 async def add_ing_to_recipe_last(message: Message,  session: AsyncSession, state: FSMContext):
+    ing_repo = IngredientRepository(session)
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo=recipe_repo, ing_repo=ing_repo)
+    
     ing_name = message.text
     data = await state.get_data()
     recipe_id = data['recipe_id']
-    result_recipe = await session.execute(select(Recipe).options(selectinload(Recipe.ingredients)).where(Recipe.id == recipe_id))
-    result_ing = await session.execute(select(func.max(Ingredient.position)).where(Ingredient.recipe_id == recipe_id))
     
-    recipe = result_recipe.scalar_one()
-    max_ing_position = result_ing.scalar()
-    
-    recipe.ingredients.append(Ingredient(name=ing_name, position=max_ing_position + 1))
+    await recipe_service.add_ingredient(recipe_id, ing_name)
     
     await session.commit()
     await message.answer('Ингридиент успешно добавлен✅')
@@ -314,22 +326,16 @@ async def add_ing_to_recipe_last(message: Message,  session: AsyncSession, state
 
 # Показать рецепты пользователя в БД
 @router.message(F.text == 'рецепты')
-async def show_recipes(message: Message) -> None:
-    async with async_session() as session:
-        user = await get_user(session, message.from_user.id)
-        recipes = await get_user_recipes(session, user.id)
+async def show_recipes(message: Message, session: AsyncSession) -> None:
+    user_repo = UserRepository(session)
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo, user_repo)
+    
+    recipes = await recipe_service.get_recipes_by_user(message.from_user.id)
         
-        text = ''
-        
-        for recipe in recipes:
-            text += f'🍣 {recipe.title.capitalize()}\n'
-            
-            for ing in recipe.ingredients:
-                text += f' • {ing.name}\n'
-            
-            text += '\n'
+    format_text = format(recipes)
                 
-        await message.answer(f'📄 Твои рецепты:\n\n{text}')
+    await message.answer(f'📄 Твои рецепты:\n\n{format_text}')
         
 
 # Логика генерации файла из данных
@@ -340,28 +346,31 @@ async def start_pdf_process(message: Message, state: FSMContext) -> None:
     
     
 @router.message(PDFStates.waiting_for_filename)
-async def get_filename(message: Message, state: FSMContext) -> None:
-    async with async_session() as session:
-        filename = message.text.strip()
+async def get_filename(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    user_repo = UserRepository(session)
+    recipe_repo = RecipeRepository(session)
+    recipe_service = RecipeService(recipe_repo, user_repo)
+    
+    filename = message.text.strip()
         
-        if not filename.endswith('.pdf'):
-            filename += '.pdf'
+    if not filename.endswith('.pdf'):
+        filename += '.pdf'
             
-        user = await get_user(session, message.from_user.id)
-        recipes_list = await get_user_recipes(session, user.id)
+    recipes = await recipe_service.get_recipes_by_user(message.from_user.id)
             
-        try:
-            path = generate_pdf(recipes_list, filename)
-        except Exception as error:
-            await message.answer('Ошибка при создании PDF.')
-            print(error)
-            await state.clear()
-            
-            return
-
-        file = FSInputFile(path)
-        
-        await message.answer_document(file)
+    try:
+        path = generate_pdf(recipes, filename)
+    except Exception as error:
+        await message.answer('Ошибка при создании PDF.')
+        print(error)
         await state.clear()
+            
+        return
+
+    file = FSInputFile(path)
         
-        os.remove(path)
+    await message.answer_document(file)
+    await state.clear()
+        
+    os.remove(path)
+    
