@@ -11,7 +11,7 @@ class IngredientService:
         ingredient = await self.ing_repo.get_by_id(ing_id)
         recipe_id = ingredient.recipe_id
         
-        self.ing_repo.delete(ingredient)
+        await self.ing_repo.delete(ingredient)
         
         ing_positions = await self.ing_repo.get_positions(recipe_id)
         
