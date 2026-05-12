@@ -3,6 +3,7 @@ import asyncio
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 
+from logger import logger
 from db.session import async_session
 from handlers import main_router, recipes_router, ingredients_router, pdf_router
 from middlewares.session_middleware import DBSessionMiddleware
@@ -21,11 +22,13 @@ async def main() -> None:
     dp.include_router(recipes_router)
     dp.include_router(ingredients_router)
     dp.include_router(pdf_router)
+    
     await dp.start_polling(bot)
 
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
+        logger.info('Bot started')
     except KeyboardInterrupt:
-        pass
+        logger.info('Bot closed')

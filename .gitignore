@@ -12,3 +12,6 @@ tests.py
 *.log
 
 output/
+logs/
+.idea/
+__pycache__/

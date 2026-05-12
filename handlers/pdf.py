@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from logger import logger
 from state import PDFStates
 from services import generate_pdf, create_recipe_service
 
@@ -21,6 +22,7 @@ async def start_pdf_process(message: Message, state: FSMContext) -> None:
     
 @router.message(PDFStates.waiting_for_filename)
 async def get_filename(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    logger.info('Started generation file')
     recipe_service = create_recipe_service(session)
     
     filename = message.text.strip()
@@ -32,9 +34,11 @@ async def get_filename(message: Message, state: FSMContext, session: AsyncSessio
             
     try:
         path = generate_pdf(recipes, filename)
-    except Exception as error:
+    except Exception:
         await message.answer('Ошибка при создании PDF.')
-        print(error)
+        
+        logger.exception("Error generation file")
+        
         await state.clear()
             
         return

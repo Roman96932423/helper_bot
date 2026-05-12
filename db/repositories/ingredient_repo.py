@@ -1,4 +1,5 @@
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Ingredient
@@ -9,7 +10,7 @@ class IngredientRepository:
         self.session = session
         
     async def get_by_id(self, ing_id: int) -> Ingredient:
-        return await self.session.get(Ingredient, ing_id)
+        return await self.session.execute(select(Ingredient).options(selectinload(Ingredient.recipe)).where(Ingredient.id == ing_id))
         
     async def delete(self, ing: Ingredient) -> None:
         await self.session.delete(ing)
