@@ -4,9 +4,10 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from state import RecipeStates, EditRecipeName
-from keyboards import build_reply_kb, build_inline_kb
+from keyboards import build_reply_kb, build_inline_kb, build_pagination_kb
 from services import create_recipe_service
-from utils import format
+from utils import format, get_pages
+from pagination import paginate
 
 
 router = Router()
@@ -158,8 +159,24 @@ async def show_recipes(message: Message, session: AsyncSession) -> None:
         await message.answer('😊 У тебя ещё нет рецептов')
         
         return
-        
-    format_text = format(recipes)
+    
+    page = 1
+    total_pages = get_pages(recipes)
+    recipes_page = paginate(recipes, page, 3)
+    format_text = format(recipes_page)
                 
-    await message.answer(f'📄 Твои рецепты:\n\n{format_text}')
+    await message.answer(f'📄 Твои рецепты:\n\n{format_text}', reply_markup=build_pagination_kb(page, total_pages))
+    
+    
+@router.callback_query(F.data.startswith('recipes_page:'))
+async def paginate_page(callback, session: AsyncSession) -> None:
+    recipe_service = create_recipe_service(session)
+    
+    recipes = await recipe_service.get_recipes_by_user(callback.from_user.id)
+    page = int(callback.data.split(':')[1])
+    total_pages = get_pages(recipes)
+    recipes_page = paginate(recipes, page, 3)
+    format_text = format(recipes_page)
+    
+    await callback.message.edit_text(f'📄 Твои рецепты:\n\n{format_text}', reply_markup=build_pagination_kb(page, total_pages))
     

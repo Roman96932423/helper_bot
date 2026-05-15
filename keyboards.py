@@ -35,3 +35,26 @@ def build_inline_kb(
 			))
             
         return keyboard.adjust(kb_size).as_markup()
+    
+    
+def build_pagination_kb(page: int, total_pages: int):
+    keyboard = InlineKeyboardBuilder()
+    
+    if page > 1:
+        keyboard.button(
+            text='⬅️',
+            callback_data=f'recipes_page:{page - 1}'
+        )
+        
+    keyboard.button(
+        text=f'{page}/{total_pages}',
+        callback_data='ignore'
+    )
+    
+    if page < total_pages:
+        keyboard.button(
+            text='➡️',
+            callback_data=f'recipes_page:{page + 1}'
+        )
+        
+    return keyboard.as_markup()
