@@ -10,7 +10,9 @@ class IngredientRepository:
         self.session = session
         
     async def get_by_id(self, ing_id: int) -> Ingredient:
-        return await self.session.execute(select(Ingredient).options(selectinload(Ingredient.recipe)).where(Ingredient.id == ing_id))
+        result =  await self.session.execute(select(Ingredient).options(selectinload(Ingredient.recipe)).where(Ingredient.id == ing_id))
+        
+        return result.scalar_one_or_none()
         
     async def delete(self, ing: Ingredient) -> None:
         await self.session.delete(ing)
